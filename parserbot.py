@@ -6,7 +6,15 @@ import os
 from datetime import datetime, timedelta
 import traceback
 import sys
-
+import sys
+print(f"🐍 Python version: {sys.version}")
+try:
+    import discord
+    print(f"✅ discord.py version: {discord.__version__}")
+except ImportError as e:
+    print(f"❌ discord.py import error: {e}")
+    sys.exit(1)
+    
 # Настройки бота
 SOURCE_SERVER_ID = 1003525677640851496  # Сервер-источник (отсюда проверяем роли)
 TARGET_SERVER_ID = 1437338164292485122  # Целевой сервер (куда выдаём роль)
