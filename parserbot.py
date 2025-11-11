@@ -37,7 +37,8 @@ SOURCE_3_ROLE_IDS = [
     1148738387226927344,
     1155752556094566400,
     1146546952830455999,
-    1146542546231763015
+    1146542546231763015,
+    1169961441189707906  # ← ДОБАВЛЕНА НОВАЯ РОЛЬ
 ]
 
 # Роли для проверки на четвертом сервере
@@ -108,7 +109,7 @@ class RoleSyncBot:
     def __init__(self):
         self.is_monitoring = False
         self.start_time = datetime.now()
-        self.banned_users = set()
+        self.banned_users = {}  # Теперь храним время бана {user_id: ban_time}
         self.last_check = datetime.now()
 
     async def log_to_channel(self, message, color=0x00ff00, view=None):
@@ -149,7 +150,7 @@ class RoleSyncBot:
                     f"• Участник лишён необходимых ролей на всех серверах\n\n"
                     f"**Статус:**\n"
                     f"• Бан на 10 минут\n"
-                    f"• Разблокировка: {(datetime.now() + ban_duration).strftime('%d.%m.%Y %H:%M')}"
+                    f"• Авторазбан: {(datetime.now() + ban_duration).strftime('%d.%m.%Y %H:%M')}"
                 ),
                 color=0xff0000,
                 timestamp=datetime.now()
@@ -159,7 +160,8 @@ class RoleSyncBot:
             if channel:
                 await channel.send(embed=ban_embed, view=UnbanButton(user_id))
             
-            self.banned_users.add(user_id)
+            # Сохраняем время бана
+            self.banned_users[user_id] = datetime.now()
             print(f"🔨 Забанен пользователь {username} ({user_id}) на 10 минут")
             
             return True
@@ -175,6 +177,55 @@ class RoleSyncBot:
             await self.log_to_channel(error_msg, color=0xff0000)
         
         return False
+
+    async def auto_unban_users(self):
+        """Автоматически разбанивает пользователей после 10 минут"""
+        try:
+            target_server = bot.get_guild(TARGET_SERVER_ID)
+            if not target_server:
+                return
+            
+            current_time = datetime.now()
+            users_to_unban = []
+            
+            # Проверяем всех забаненных пользователей
+            for user_id, ban_time in list(self.banned_users.items()):
+                ban_duration = current_time - ban_time
+                
+                # Если прошло больше 10 минут - разбаниваем
+                if ban_duration.total_seconds() >= 600:  # 600 секунд = 10 минут
+                    users_to_unban.append(user_id)
+            
+            # Разбаниваем пользователей
+            for user_id in users_to_unban:
+                try:
+                    user = await bot.fetch_user(user_id)
+                    await target_server.unban(user, reason="Автоматический разбан после 10 минут")
+                    
+                    # Удаляем из списка забаненных
+                    del self.banned_users[user_id]
+                    
+                    log_msg = (
+                        f"🔓 **Автоматический разбан**\n"
+                        f"• Пользователь: `{user.display_name}`\n"
+                        f"• ID: `{user_id}`\n"
+                        f"• Бан длился: 10 минут\n"
+                        f"• Время разбана: {current_time.strftime('%d.%m.%Y %H:%M:%S')}"
+                    )
+                    await self.log_to_channel(log_msg, color=0x00ff00)
+                    print(f"🔓 Автоматически разбанен пользователь {user.display_name} ({user_id})")
+                    
+                except discord.NotFound:
+                    # Пользователь уже разбанен или не найден
+                    del self.banned_users[user_id]
+                except Exception as e:
+                    print(f"❌ Ошибка при авторазбане пользователя {user_id}: {e}")
+            
+            if users_to_unban:
+                print(f"✅ Автоматически разбанено {len(users_to_unban)} пользователей")
+                
+        except Exception as e:
+            print(f"❌ Ошибка в авторазбане: {e}")
 
     async def check_user_roles(self, user_id):
         """Проверяет роли пользователя на всех серверах"""
@@ -235,13 +286,6 @@ class RoleSyncBot:
             
             has_any_roles = has_first_server_roles or has_second_server_roles or has_third_server_roles or has_fourth_server_roles
             
-            print(f"📊 Результат проверки для {user_id}:")
-            print(f"   Первый сервер: {has_first_server_roles} ({found_roles_first})")
-            print(f"   Второй сервер: {has_second_server_roles} ({found_roles_second})")
-            print(f"   Третий сервер: {has_third_server_roles} ({found_roles_third})")
-            print(f"   Четвертый сервер: {has_fourth_server_roles} ({found_roles_fourth})")
-            print(f"   Есть роли на любом сервере: {has_any_roles}")
-            
             return {
                 'has_first_server': has_first_server_roles,
                 'has_second_server': has_second_server_roles,
@@ -280,15 +324,6 @@ class RoleSyncBot:
             target_role_2 = target_server.get_role(TARGET_ROLE_2_ID)
             target_role_3 = target_server.get_role(TARGET_ROLE_3_ID)
             target_role_4 = target_server.get_role(TARGET_ROLE_4_ID)
-            
-            if not target_role:
-                print(f"❌ Целевая роль 1 {TARGET_ROLE_ID} не найдена")
-            if not target_role_2:
-                print(f"❌ Целевая роль 2 {TARGET_ROLE_2_ID} не найдена")
-            if not target_role_3:
-                print(f"❌ Целевая роль 3 {TARGET_ROLE_3_ID} не найдена")
-            if not target_role_4:
-                print(f"❌ Целевая роль 4 {TARGET_ROLE_4_ID} не найдена")
             
             if not target_role or not target_role_2 or not target_role_3 or not target_role_4:
                 return False
@@ -478,13 +513,15 @@ async def on_ready():
         f"• Сервер 3: {'✅' if source_server_3 else '❌'} `{SOURCE_SERVER_3_ID}`\n"
         f"• Сервер 4: {'✅' if source_server_4 else '❌'} `{SOURCE_SERVER_4_ID}`\n"
         f"• Целевой сервер: {'✅' if target_server else '❌'} `{TARGET_SERVER_ID}`\n"
-        f"• Интервал проверки: `10 секунд`"
+        f"• Интервал проверки: `10 секунд`\n"
+        f"• Авторазбан: `10 минут`"
     )
     await role_bot.log_to_channel(startup_msg, color=0x00ff00)
     
     role_bot.is_monitoring = True
     rapid_sync_task.start()
     unban_checker.start()
+    auto_unban_task.start()
 
 async def load_banned_users():
     """Загружает список забаненных пользователей при запуске"""
@@ -493,7 +530,8 @@ async def load_banned_users():
         if target_server:
             bans = [entry async for entry in target_server.bans()]
             for ban_entry in bans:
-                role_bot.banned_users.add(ban_entry.user.id)
+                # При загрузке ставим текущее время минус 5 минут, чтобы не разбанивать сразу
+                role_bot.banned_users[ban_entry.user.id] = datetime.now() - timedelta(minutes=5)
             print(f"📋 Загружено {len(bans)} забаненных пользователей")
     except Exception as e:
         print(f"❌ Ошибка при загрузке банов: {e}")
@@ -508,10 +546,19 @@ async def rapid_sync_task():
 
 @tasks.loop(minutes=1)
 async def unban_checker():
+    """Проверяет истечение времени бана"""
     try:
-        pass
+        await role_bot.auto_unban_users()
     except Exception as e:
         print(f"❌ Ошибка в проверке банов: {e}")
+
+@tasks.loop(minutes=1)
+async def auto_unban_task():
+    """Автоматический разбан каждую минуту"""
+    try:
+        await role_bot.auto_unban_users()
+    except Exception as e:
+        print(f"❌ Ошибка в авторазбане: {e}")
 
 async def sync_all_users():
     """Синхронизирует всех пользователей на целевом сервере"""
@@ -524,8 +571,6 @@ async def sync_all_users():
         processed = 0
         actions = 0
         
-        print(f"🔄 Начинаю проверку {len(target_server.members)} пользователей на 4 серверах...")
-        
         for member in target_server.members:
             if member.bot:
                 continue
@@ -537,7 +582,8 @@ async def sync_all_users():
             
             await asyncio.sleep(0.05)
         
-        print(f"✅ Проверено {processed} пользователей, выполнено действий: {actions}")
+        if actions > 0:
+            print(f"✅ Проверено {processed} пользователей, выполнено действий: {actions}")
         
     except Exception as e:
         print(f"❌ Ошибка при синхронизации всех пользователей: {e}")
@@ -576,50 +622,50 @@ async def debug_user(ctx, user: discord.Member):
     
     await ctx.send(debug_msg)
 
-@bot.command(name='check_servers')
+@bot.command(name='check_bans')
 @commands.has_permissions(administrator=True)
-async def check_servers(ctx):
-    """Проверить доступность всех серверов"""
-    source_server = bot.get_guild(SOURCE_SERVER_ID)
-    source_server_2 = bot.get_guild(SOURCE_SERVER_2_ID)
-    source_server_3 = bot.get_guild(SOURCE_SERVER_3_ID)
-    source_server_4 = bot.get_guild(SOURCE_SERVER_4_ID)
-    target_server = bot.get_guild(TARGET_SERVER_ID)
-    
-    server_status = (
-        f"🌐 **Статус серверов**\n"
-        f"• Первый сервер ({SOURCE_SERVER_ID}): {'✅ Доступен' if source_server else '❌ Не доступен'}\n"
-        f"• Второй сервер ({SOURCE_SERVER_2_ID}): {'✅ Доступен' if source_server_2 else '❌ Не доступен'}\n"
-        f"• Третий сервер ({SOURCE_SERVER_3_ID}): {'✅ Доступен' if source_server_3 else '❌ Не доступен'}\n"
-        f"• Четвертый сервер ({SOURCE_SERVER_4_ID}): {'✅ Доступен' if source_server_4 else '❌ Не доступен'}\n"
-        f"• Целевой сервер ({TARGET_SERVER_ID}): {'✅ Доступен' if target_server else '❌ Не доступен'}\n"
-    )
-    
-    await ctx.send(server_status)
-
-@bot.command(name='status')
-async def bot_status(ctx):
-    """Показать статус бота"""
-    uptime = datetime.now() - role_bot.start_time
-    status_msg = (
-        f"🤖 **Статус бота**\n"
-        f"• Работает: `{role_bot.is_monitoring}`\n"
-        f"• Uptime: `{str(uptime).split('.')[0]}`\n"
-        f"• Интервал проверки: `10 секунд`\n"
-        f"• Серверы для проверки: `4`\n"
-        f"• Забанено: `{len(role_bot.banned_users)}` пользователей"
-    )
-    await ctx.send(status_msg)
+async def check_bans(ctx):
+    """Показать список забаненных пользователей и время до разбана"""
+    try:
+        target_server = bot.get_guild(TARGET_SERVER_ID)
+        if not target_server:
+            await ctx.send("❌ Целевой сервер не доступен")
+            return
+        
+        current_time = datetime.now()
+        ban_list = []
+        
+        for user_id, ban_time in role_bot.banned_users.items():
+            try:
+                user = await bot.fetch_user(user_id)
+                time_passed = current_time - ban_time
+                time_remaining = timedelta(minutes=10) - time_passed
+                
+                if time_remaining.total_seconds() > 0:
+                    minutes_remaining = int(time_remaining.total_seconds() // 60)
+                    seconds_remaining = int(time_remaining.total_seconds() % 60)
+                    ban_list.append(f"• {user.display_name} - {minutes_remaining}м {seconds_remaining}с")
+                else:
+                    # Должны быть разбанены в следующей проверке
+                    ban_list.append(f"• {user.display_name} - ожидает разбана")
+                    
+            except Exception:
+                ban_list.append(f"• ID {user_id} - пользователь не найден")
+        
+        if ban_list:
+            await ctx.send(f"🔨 **Забаненные пользователи ({len(ban_list)}):**\n" + "\n".join(ban_list[:10]))
+        else:
+            await ctx.send("✅ Нет забаненных пользователей")
+            
+    except Exception as e:
+        await ctx.send(f"❌ Ошибка при получении списка банов: {e}")
 
 # Запуск бота
 def main():
-    print("🚀 Запуск Role Sync Bot с 4 серверами...")
-    print(f"🔍 Сервер 1: {SOURCE_SERVER_ID}")
-    print(f"🔍 Сервер 2: {SOURCE_SERVER_2_ID}")
-    print(f"🔍 Сервер 3: {SOURCE_SERVER_3_ID}")
-    print(f"🔍 Сервер 4: {SOURCE_SERVER_4_ID}")
-    print(f"🎯 Целевая роль 4: {TARGET_ROLE_4_ID}")
+    print("🚀 Запуск Role Sync Bot с авторазбаном...")
+    print(f"🔍 Серверов для проверки: 4")
     print(f"⏰ Бан: 10 минут")
+    print(f"🔄 Авторазбан: каждую минуту")
     
     token = os.getenv('DISCORD_TOKEN')
     
