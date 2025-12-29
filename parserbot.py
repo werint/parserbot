@@ -425,6 +425,11 @@ async def on_ready():
     rapid_sync_task.start()
     unban_checker.start()
     auto_unban_task.start()
+    
+    # Запускаем проверку всех пользователей при старте
+    await bot.wait_until_ready()
+    await asyncio.sleep(5)  # Ждем загрузки всех членов
+    await sync_all_users_once()
 
 async def load_banned_users():
     """Загружает список забаненных пользователей при запуске"""
@@ -438,6 +443,52 @@ async def load_banned_users():
             print(f"📋 Загружено {len(bans)} забаненных пользователей")
     except Exception as e:
         print(f"❌ Ошибка при загрузке банов: {e}")
+
+async def sync_all_users_once():
+    """Проверяет всех пользователей один раз при запуске"""
+    try:
+        target_server = bot.get_guild(TARGET_SERVER_ID)
+        if not target_server:
+            print("❌ Целевой сервер не доступен для синхронизации")
+            return
+        
+        members = [member for member in target_server.members if not member.bot]
+        total_count = len(members)
+        
+        print(f"🔍 Начинаю проверку всех {total_count} пользователей на сервере...")
+        
+        progress_msg = await bot.get_channel(LOG_CHANNEL_ID).send(
+            f"🔄 **Начинаю проверку всех {total_count} пользователей...**"
+        )
+        
+        processed = 0
+        actions = 0
+        
+        for member in members:
+            processed += 1
+            result = await role_bot.check_and_sync_user(member.id, check_ban=True)
+            if result:
+                actions += 1
+            
+            # Обновляем сообщение каждые 20 пользователей
+            if processed % 20 == 0:
+                await progress_msg.edit(
+                    content=f"🔄 **Проверка пользователей:** {processed}/{total_count} ({actions} действий)"
+                )
+            
+            await asyncio.sleep(0.1)
+        
+        await progress_msg.edit(
+            content=f"✅ **Проверка завершена!**\n"
+                   f"• Проверено: {processed}/{total_count} пользователей\n"
+                   f"• Выполнено действий: {actions}\n"
+                   f"• Забанено: {len(role_bot.banned_users)} пользователей"
+        )
+        
+        print(f"✅ Проверено {processed} пользователей, выполнено действий: {actions}")
+        
+    except Exception as e:
+        print(f"❌ Ошибка при проверке всех пользователей: {e}")
 
 @tasks.loop(seconds=10)
 async def rapid_sync_task():
@@ -464,7 +515,7 @@ async def auto_unban_task():
         print(f"❌ Ошибка в авторазбане: {e}")
 
 async def sync_all_users():
-    """Синхронизирует всех пользователей на целевом сервере"""
+    """Синхронизирует всех пользователей на целевом сервере (для периодической проверки)"""
     try:
         target_server = bot.get_guild(TARGET_SERVER_ID)
         if not target_server:
@@ -503,6 +554,60 @@ async def on_message(message):
         await bot.process_commands(message)
     except Exception as e:
         print(f"Ошибка в on_message: {e}")
+
+@bot.command(name='check_all')
+@commands.has_permissions(administrator=True)
+async def check_all_command(ctx):
+    """Проверить всех пользователей на сервере"""
+    await ctx.send("🔄 Начинаю проверку всех пользователей на сервере...")
+    
+    try:
+        target_server = bot.get_guild(TARGET_SERVER_ID)
+        if not target_server:
+            await ctx.send("❌ Целевой сервер не доступен")
+            return
+        
+        members = [member for member in target_server.members if not member.bot]
+        total_count = len(members)
+        
+        status_msg = await ctx.send(f"🔍 Найдено {total_count} пользователей для проверки...")
+        
+        processed = 0
+        actions = 0
+        
+        for member in members:
+            processed += 1
+            result = await role_bot.check_and_sync_user(member.id, check_ban=True)
+            if result:
+                actions += 1
+            
+            # Обновляем статус каждые 20 пользователей
+            if processed % 20 == 0:
+                await status_msg.edit(content=f"🔄 Проверено {processed}/{total_count} пользователей ({actions} действий)")
+            
+            await asyncio.sleep(0.1)
+        
+        await status_msg.edit(
+            content=f"✅ **Проверка завершена!**\n"
+                   f"• Проверено: {processed} пользователей\n"
+                   f"• Выполнено действий: {actions}\n"
+                   f"• Забанено пользователей: {len(role_bot.banned_users)}"
+        )
+        
+        # Отправляем полный лог в канал логов
+        log_msg = (
+            f"📊 **Ручная проверка всех пользователей**\n"
+            f"• Инициировал: {ctx.author.mention}\n"
+            f"• Проверено: {processed} пользователей\n"
+            f"• Выполнено действий: {actions}\n"
+            f"• Забанено: {len(role_bot.banned_users)} пользователей\n"
+            f"• Время: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}"
+        )
+        await role_bot.log_to_channel(log_msg, color=0x0099ff)
+        
+    except Exception as e:
+        await ctx.send(f"❌ Ошибка при проверке пользователей: {e}")
+        print(f"❌ Ошибка в команде check_all: {e}")
 
 @bot.command(name='debug_user')
 @commands.has_permissions(administrator=True)
@@ -561,12 +666,38 @@ async def check_bans(ctx):
     except Exception as e:
         await ctx.send(f"❌ Ошибка при получении списка банов: {e}")
 
+@bot.command(name='stats')
+@commands.has_permissions(administrator=True)
+async def stats_command(ctx):
+    """Показать статистику бота"""
+    target_server = bot.get_guild(TARGET_SERVER_ID)
+    
+    if not target_server:
+        await ctx.send("❌ Целевой сервер не доступен")
+        return
+    
+    total_members = len([m for m in target_server.members if not m.bot])
+    banned_count = len(role_bot.banned_users)
+    
+    stats_msg = (
+        f"📊 **Статистика Role Sync Bot**\n"
+        f"• Время работы: {datetime.now() - role_bot.start_time}\n"
+        f"• Всего пользователей: {total_members}\n"
+        f"• Забанено: {banned_count} пользователей\n"
+        f"• Авторазбан: через 10 минут\n"
+        f"• Интервал проверки: 10 секунд\n"
+        f"• Мониторинг активен: {'✅' if role_bot.is_monitoring else '❌'}"
+    )
+    
+    await ctx.send(stats_msg)
+
 # Запуск бота
 def main():
     print("🚀 Запуск Role Sync Bot с авторазбаном...")
     print(f"🔍 Серверов для проверки: 2")
     print(f"⏰ Бан: 10 минут")
     print(f"🔄 Авторазбан: каждую минуту")
+    print(f"📊 При запуске: проверка всех пользователей")
     
     token = os.getenv('DISCORD_TOKEN')
     
