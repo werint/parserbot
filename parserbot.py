@@ -271,6 +271,7 @@ class RoleSyncBot:
             target_role_2 = target_server.get_role(TARGET_ROLE_2_ID)
             
             if not target_role or not target_role_2:
+                print("❌ Целевые роли не найдены")
                 return False
             
             target_member = target_server.get_member(user_id)
@@ -331,18 +332,47 @@ class RoleSyncBot:
                 )
                 await self.log_to_channel(log_msg, color=0x0099ff)
             
-            # Бан только если нет ролей на ЛЮБОМ из серверов
-            if check_ban and not role_check['has_any_roles'] and user_id not in self.banned_users:
+            # ======= ИСПРАВЛЕННАЯ ЛОГИКА БАНА =======
+            # Теперь баним если:
+            # 1. У пользователя НЕТ ролей ни на одном сервере (has_any_roles = False)
+            # 2. check_ban = True (можно отключить для тестов)
+            # 3. Пользователь еще не забанен
+            if check_ban and not role_check['has_any_roles']:
+                # Проверяем, есть ли у пользователя целевые роли
                 has_any_target_role = has_target_role or has_target_role_2
+                
+                # Если есть целевые роли, но нет исходных ролей - бан
                 if has_any_target_role:
-                    print(f"🔨 Пользователь {username} ({user_id}) подлежит бану - нет ролей ни на одном сервере")
-                    ban_result = await self.ban_user(user_id, username, "Отсутствие требуемых ролей на всех серверах")
+                    print(f"⚠️ Пользователь {username} ({user_id}) имеет целевые роли, но нет исходных - подлежит бану")
+                    
+                    # Проверяем, не забанен ли уже пользователь
+                    if user_id not in self.banned_users:
+                        ban_result = await self.ban_user(user_id, username, "Отсутствие требуемых ролей на всех серверах")
+                        if ban_result:
+                            log_msg = (
+                                f"🔨 **Пользователь забанен**\n"
+                                f"• Пользователь: `{username}`\n"
+                                f"• ID: `{user_id}`\n"
+                                f"• Причина: Нет требуемых ролей ни на одном сервере\n"
+                                f"• Имел целевые роли: {'Да' if has_any_target_role else 'Нет'}\n"
+                                f"• Длительность: 10 минут"
+                            )
+                            await self.log_to_channel(log_msg, color=0xff6600)
+                            return True
+                    else:
+                        print(f"ℹ️ Пользователь {username} ({user_id}) уже забанен, пропускаем")
+                
+                # Также баним пользователей без ЛЮБЫХ ролей (даже если нет целевых ролей)
+                elif user_id not in self.banned_users:
+                    # Пользователь на целевом сервере, но без целевых ролей
+                    print(f"⚠️ Пользователь {username} ({user_id}) на целевом сервере, но без ролей - подлежит бану")
+                    ban_result = await self.ban_user(user_id, username, "Нахождение на сервере без требуемых ролей")
                     if ban_result:
                         log_msg = (
                             f"🔨 **Пользователь забанен**\n"
                             f"• Пользователь: `{username}`\n"
                             f"• ID: `{user_id}`\n"
-                            f"• Причина: Нет требуемых ролей ни на одном сервере\n"
+                            f"• Причина: Нахождение на сервере без требуемых ролей\n"
                             f"• Длительность: 10 минут"
                         )
                         await self.log_to_channel(log_msg, color=0xff6600)
@@ -353,6 +383,8 @@ class RoleSyncBot:
         except Exception as e:
             error_msg = f"❌ Критическая ошибка при синхронизации пользователя {user_id}: {e}"
             print(error_msg)
+            import traceback
+            traceback.print_exc()
         
         return False
 
@@ -417,7 +449,8 @@ async def on_ready():
         f"• Сервер 2: {'✅' if source_server_2 else '❌'} `{SOURCE_SERVER_2_ID}`\n"
         f"• Целевой сервер: {'✅' if target_server else '❌'} `{TARGET_SERVER_ID}`\n"
         f"• Интервал проверки: `10 секунд`\n"
-        f"• Авторазбан: `10 минут`"
+        f"• Авторазбан: `10 минут`\n"
+        f"• Банит если: Нет ролей на исходных серверах"
     )
     await role_bot.log_to_channel(startup_msg, color=0x00ff00)
     
@@ -428,7 +461,7 @@ async def on_ready():
     
     # Запускаем проверку всех пользователей при старте
     await bot.wait_until_ready()
-    await asyncio.sleep(5)  # Ждем загрузки всех членов
+    await asyncio.sleep(10)  # Ждем загрузки всех членов
     await sync_all_users_once()
 
 async def load_banned_users():
@@ -457,12 +490,17 @@ async def sync_all_users_once():
         
         print(f"🔍 Начинаю проверку всех {total_count} пользователей на сервере...")
         
-        progress_msg = await bot.get_channel(LOG_CHANNEL_ID).send(
-            f"🔄 **Начинаю проверку всех {total_count} пользователей...**"
-        )
+        log_channel = bot.get_channel(LOG_CHANNEL_ID)
+        if log_channel:
+            progress_msg = await log_channel.send(
+                f"🔄 **Начинаю проверку всех {total_count} пользователей...**"
+            )
+        else:
+            progress_msg = None
         
         processed = 0
         actions = 0
+        banned_count = 0
         
         for member in members:
             processed += 1
@@ -470,25 +508,37 @@ async def sync_all_users_once():
             if result:
                 actions += 1
             
-            # Обновляем сообщение каждые 20 пользователей
-            if processed % 20 == 0:
-                await progress_msg.edit(
-                    content=f"🔄 **Проверка пользователей:** {processed}/{total_count} ({actions} действий)"
-                )
+            # Считаем сколько пользователей забанено в этой сессии
+            if member.id in role_bot.banned_users:
+                banned_count += 1
             
-            await asyncio.sleep(0.1)
+            # Обновляем сообщение каждые 10 пользователей
+            if progress_msg and processed % 10 == 0:
+                try:
+                    await progress_msg.edit(
+                        content=f"🔄 **Проверка пользователей:** {processed}/{total_count}\n"
+                               f"• Действий: {actions}\n"
+                               f"• Новых банов: {banned_count}"
+                    )
+                except:
+                    pass
+            
+            await asyncio.sleep(0.05)
         
-        await progress_msg.edit(
-            content=f"✅ **Проверка завершена!**\n"
-                   f"• Проверено: {processed}/{total_count} пользователей\n"
-                   f"• Выполнено действий: {actions}\n"
-                   f"• Забанено: {len(role_bot.banned_users)} пользователей"
-        )
+        if progress_msg:
+            await progress_msg.edit(
+                content=f"✅ **Проверка завершена!**\n"
+                       f"• Проверено: {processed}/{total_count} пользователей\n"
+                       f"• Выполнено действий: {actions}\n"
+                       f"• Забанено в этой сессии: {banned_count} пользователей"
+            )
         
-        print(f"✅ Проверено {processed} пользователей, выполнено действий: {actions}")
+        print(f"✅ Проверено {processed} пользователей, выполнено действий: {actions}, забанено: {banned_count}")
         
     except Exception as e:
         print(f"❌ Ошибка при проверке всех пользователей: {e}")
+        import traceback
+        traceback.print_exc()
 
 @tasks.loop(seconds=10)
 async def rapid_sync_task():
@@ -524,6 +574,7 @@ async def sync_all_users():
         
         processed = 0
         actions = 0
+        banned_in_cycle = 0
         
         for member in target_server.members:
             if member.bot:
@@ -534,10 +585,14 @@ async def sync_all_users():
             if result:
                 actions += 1
             
-            await asyncio.sleep(0.05)
+            # Считаем новые баны в этом цикле
+            if member.id in role_bot.banned_users:
+                banned_in_cycle += 1
+            
+            await asyncio.sleep(0.02)
         
-        if actions > 0:
-            print(f"✅ Проверено {processed} пользователей, выполнено действий: {actions}")
+        if actions > 0 or banned_in_cycle > 0:
+            print(f"✅ Проверено {processed} пользователей, действий: {actions}, банов: {banned_in_cycle}")
         
     except Exception as e:
         print(f"❌ Ошибка при синхронизации всех пользователей: {e}")
@@ -554,6 +609,74 @@ async def on_message(message):
         await bot.process_commands(message)
     except Exception as e:
         print(f"Ошибка в on_message: {e}")
+
+@bot.command(name='check_user')
+@commands.has_permissions(administrator=True)
+async def check_user_command(ctx, user: discord.Member = None):
+    """Проверить конкретного пользователя (или себя)"""
+    if not user:
+        user = ctx.author
+    
+    await ctx.send(f"🔍 Проверяю пользователя {user.mention}...")
+    
+    try:
+        # Получаем детальную информацию
+        role_check = await role_bot.check_user_roles(user.id)
+        
+        # Проверяем синхронизацию
+        result = await role_bot.check_and_sync_user(user.id, check_ban=True)
+        
+        # Получаем информацию о ролях на целевом сервере
+        target_server = bot.get_guild(TARGET_SERVER_ID)
+        target_role = target_server.get_role(TARGET_ROLE_ID)
+        target_role_2 = target_server.get_role(TARGET_ROLE_2_ID)
+        
+        has_target_role = target_role in user.roles if target_role else False
+        has_target_role_2 = target_role_2 in user.roles if target_role_2 else False
+        
+        # Создаем детальный отчет
+        report = (
+            f"📋 **Отчет по пользователю {user.mention}**\n"
+            f"• ID: `{user.id}`\n"
+            f"• Имя: `{user.display_name}`\n\n"
+            
+            f"**Исходные сервера:**\n"
+            f"• Сервер 1 ({SOURCE_SERVER_ID}): {'✅ Есть роли' if role_check['has_first_server'] else '❌ Нет ролей'}\n"
+        )
+        
+        if role_check['found_roles_first']:
+            report += f"  Найденные роли: {', '.join(role_check['found_roles_first'])}\n"
+        
+        report += f"• Сервер 2 ({SOURCE_SERVER_2_ID}): {'✅ Есть роли' if role_check['has_second_server'] else '❌ Нет ролей'}\n"
+        
+        if role_check['found_roles_second']:
+            report += f"  Найденные роли: {', '.join(role_check['found_roles_second'])}\n"
+        
+        report += f"\n**Целевой сервер:**\n"
+        report += f"• Роль 1 ({TARGET_ROLE_ID}): {'✅ Есть' if has_target_role else '❌ Нет'}\n"
+        report += f"• Роль 2 ({TARGET_ROLE_2_ID}): {'✅ Есть' if has_target_role_2 else '❌ Нет'}\n"
+        
+        report += f"\n**Статус:**\n"
+        report += f"• Есть роли на любом сервере: {'✅ Да' if role_check['has_any_roles'] else '❌ Нет'}\n"
+        report += f"• Статус бана: {'🔨 Забанен' if user.id in role_bot.banned_users else '✅ Не забанен'}\n"
+        
+        if user.id in role_bot.banned_users:
+            ban_time = role_bot.banned_users[user.id]
+            time_passed = datetime.now() - ban_time
+            time_remaining = timedelta(minutes=10) - time_passed
+            
+            if time_remaining.total_seconds() > 0:
+                minutes = int(time_remaining.total_seconds() // 60)
+                seconds = int(time_remaining.total_seconds() % 60)
+                report += f"• До разбана: {minutes}м {seconds}с\n"
+        
+        report += f"• Синхронизация: {'✅ Выполнена' if result else '❌ Не выполнена'}"
+        
+        await ctx.send(report)
+        
+    except Exception as e:
+        await ctx.send(f"❌ Ошибка при проверке пользователя: {e}")
+        print(f"❌ Ошибка в команде check_user: {e}")
 
 @bot.command(name='check_all')
 @commands.has_permissions(administrator=True)
@@ -574,6 +697,7 @@ async def check_all_command(ctx):
         
         processed = 0
         actions = 0
+        banned_in_session = 0
         
         for member in members:
             processed += 1
@@ -581,17 +705,25 @@ async def check_all_command(ctx):
             if result:
                 actions += 1
             
-            # Обновляем статус каждые 20 пользователей
-            if processed % 20 == 0:
-                await status_msg.edit(content=f"🔄 Проверено {processed}/{total_count} пользователей ({actions} действий)")
+            # Считаем новые баны в этой сессии
+            if member.id in role_bot.banned_users:
+                # Проверяем, был ли пользователь забанен недавно (в течение последней минуты)
+                ban_time = role_bot.banned_users[member.id]
+                if datetime.now() - ban_time < timedelta(minutes=1):
+                    banned_in_session += 1
             
-            await asyncio.sleep(0.1)
+            # Обновляем статус каждые 10 пользователей
+            if processed % 10 == 0:
+                await status_msg.edit(content=f"🔄 Проверено {processed}/{total_count} пользователей ({actions} действий, {banned_in_session} новых банов)")
+            
+            await asyncio.sleep(0.05)
         
         await status_msg.edit(
             content=f"✅ **Проверка завершена!**\n"
                    f"• Проверено: {processed} пользователей\n"
                    f"• Выполнено действий: {actions}\n"
-                   f"• Забанено пользователей: {len(role_bot.banned_users)}"
+                   f"• Новых банов в сессии: {banned_in_session}\n"
+                   f"• Всего забанено: {len(role_bot.banned_users)}"
         )
         
         # Отправляем полный лог в канал логов
@@ -600,7 +732,8 @@ async def check_all_command(ctx):
             f"• Инициировал: {ctx.author.mention}\n"
             f"• Проверено: {processed} пользователей\n"
             f"• Выполнено действий: {actions}\n"
-            f"• Забанено: {len(role_bot.banned_users)} пользователей\n"
+            f"• Новых банов: {banned_in_session}\n"
+            f"• Всего забанено: {len(role_bot.banned_users)}\n"
             f"• Время: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}"
         )
         await role_bot.log_to_channel(log_msg, color=0x0099ff)
@@ -608,25 +741,6 @@ async def check_all_command(ctx):
     except Exception as e:
         await ctx.send(f"❌ Ошибка при проверке пользователей: {e}")
         print(f"❌ Ошибка в команде check_all: {e}")
-
-@bot.command(name='debug_user')
-@commands.has_permissions(administrator=True)
-async def debug_user(ctx, user: discord.Member):
-    """Диагностика конкретного пользователя"""
-    await ctx.send(f"🔍 Запускаю диагностику для {user.mention}...")
-    
-    role_check = await role_bot.check_user_roles(user.id)
-    
-    debug_msg = (
-        f"🔧 **Диагностика пользователя {user.mention}**\n"
-        f"• ID: `{user.id}`\n"
-        f"• Первый сервер: {'✅' if role_check['has_first_server'] else '❌'} {', '.join(role_check['found_roles_first']) if role_check['found_roles_first'] else 'Нет ролей'}\n"
-        f"• Второй сервер: {'✅' if role_check['has_second_server'] else '❌'} {', '.join(role_check['found_roles_second']) if role_check['found_roles_second'] else 'Нет ролей'}\n"
-        f"• Есть роли на любом сервере: {'✅' if role_check['has_any_roles'] else '❌'}\n"
-        f"• Статус бана: {'🔨 Забанен' if user.id in role_bot.banned_users else '✅ Не забанен'}"
-    )
-    
-    await ctx.send(debug_msg)
 
 @bot.command(name='check_bans')
 @commands.has_permissions(administrator=True)
@@ -659,7 +773,7 @@ async def check_bans(ctx):
                 ban_list.append(f"• ID {user_id} - пользователь не найден")
         
         if ban_list:
-            await ctx.send(f"🔨 **Забаненные пользователи ({len(ban_list)}):**\n" + "\n".join(ban_list[:10]))
+            await ctx.send(f"🔨 **Забаненные пользователи ({len(ban_list)}):**\n" + "\n".join(ban_list[:15]))
         else:
             await ctx.send("✅ Нет забаненных пользователей")
             
@@ -679,10 +793,19 @@ async def stats_command(ctx):
     total_members = len([m for m in target_server.members if not m.bot])
     banned_count = len(role_bot.banned_users)
     
+    # Подсчитываем пользователей с ролями
+    target_role = target_server.get_role(TARGET_ROLE_ID)
+    target_role_2 = target_server.get_role(TARGET_ROLE_2_ID)
+    
+    with_role_1 = len([m for m in target_server.members if target_role in m.roles]) if target_role else 0
+    with_role_2 = len([m for m in target_server.members if target_role_2 in m.roles]) if target_role_2 else 0
+    
     stats_msg = (
         f"📊 **Статистика Role Sync Bot**\n"
         f"• Время работы: {datetime.now() - role_bot.start_time}\n"
         f"• Всего пользователей: {total_members}\n"
+        f"• С ролью 1: {with_role_1}\n"
+        f"• С ролью 2: {with_role_2}\n"
         f"• Забанено: {banned_count} пользователей\n"
         f"• Авторазбан: через 10 минут\n"
         f"• Интервал проверки: 10 секунд\n"
@@ -698,6 +821,7 @@ def main():
     print(f"⏰ Бан: 10 минут")
     print(f"🔄 Авторазбан: каждую минуту")
     print(f"📊 При запуске: проверка всех пользователей")
+    print(f"⚠️  Логика бана: если нет ролей на исходных серверах")
     
     token = os.getenv('DISCORD_TOKEN')
     
