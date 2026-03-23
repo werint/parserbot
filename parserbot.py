@@ -9,8 +9,9 @@ import os
 
 # Настройки бота
 SOURCE_SERVER_ID = 1003525677640851496  # Первый сервер-источник
-SOURCE_SERVER_2_ID = 1135475290630529044  # Второй сервер-источник (ОБНОВЛЕН)
-SOURCE_SERVER_3_ID = 1404969894562500718  # Третий сервер-источник (ДОБАВЛЕН)
+SOURCE_SERVER_2_ID = 1135475290630529044  # Второй сервер-источник
+SOURCE_SERVER_3_ID = 1404969894562500718  # Третий сервер-источник
+SOURCE_SERVER_4_ID = 1393772967569260627  # Четвертый сервер-источник (ДОБАВЛЕН)
 TARGET_SERVER_ID = 1437338164292485122  # Целевой сервер (куда выдаём роли)
 
 # Роли для проверки на первом сервере
@@ -18,22 +19,28 @@ SOURCE_ROLE_IDS = [
     1481402373879365835
 ]
 
-# Роли для проверки на втором сервере (ОБНОВЛЕНЫ)
+# Роли для проверки на втором сервере
 SOURCE_2_ROLE_IDS = [
     1353826792443609110,
     1135478212584022026
 ]
 
-# Роли для проверки на третьем сервере (ДОБАВЛЕНЫ)
+# Роли для проверки на третьем сервере
 SOURCE_3_ROLE_IDS = [
     1404969894574952557,
     1404969894574952556
 ]
 
+# Роли для проверки на четвертом сервере (ДОБАВЛЕНЫ)
+SOURCE_4_ROLE_IDS = [
+    1393776465639899197
+]
+
 # Целевые роли для выдачи
 TARGET_ROLE_ID = 1437338476147380235    # Первая целевая роль (первый сервер)
-TARGET_ROLE_2_ID = 1485619582214475867  # Вторая целевая роль (второй сервер) (ОБНОВЛЕН)
-TARGET_ROLE_3_ID = 1485619744320127100  # Третья целевая роль (третий сервер) (ДОБАВЛЕН)
+TARGET_ROLE_2_ID = 1485619582214475867  # Вторая целевая роль (второй сервер)
+TARGET_ROLE_3_ID = 1485619744320127100  # Третья целевая роль (третий сервер)
+TARGET_ROLE_4_ID = 1485685800388530198  # Четвертая целевая роль (четвертый сервер) (ДОБАВЛЕН)
 
 LOG_CHANNEL_ID = 1485618781807050914    # Канал для логов
 
@@ -216,13 +223,16 @@ class RoleSyncBot:
             source_server = bot.get_guild(SOURCE_SERVER_ID)
             source_server_2 = bot.get_guild(SOURCE_SERVER_2_ID)
             source_server_3 = bot.get_guild(SOURCE_SERVER_3_ID)
+            source_server_4 = bot.get_guild(SOURCE_SERVER_4_ID)
             
             has_first_server_roles = False
             has_second_server_roles = False
             has_third_server_roles = False
+            has_fourth_server_roles = False
             found_roles_first = []
             found_roles_second = []
             found_roles_third = []
+            found_roles_fourth = []
             
             # Проверяем первый сервер
             if source_server:
@@ -254,15 +264,27 @@ class RoleSyncBot:
                             has_third_server_roles = True
                             found_roles_third.append(f"{role.name} ({role.id})")
             
-            has_any_roles = has_first_server_roles or has_second_server_roles or has_third_server_roles
+            # Проверяем четвертый сервер
+            if source_server_4:
+                source_member_4 = source_server_4.get_member(user_id)
+                if source_member_4:
+                    for role_id in SOURCE_4_ROLE_IDS:
+                        role = source_server_4.get_role(role_id)
+                        if role and role in source_member_4.roles:
+                            has_fourth_server_roles = True
+                            found_roles_fourth.append(f"{role.name} ({role.id})")
+            
+            has_any_roles = has_first_server_roles or has_second_server_roles or has_third_server_roles or has_fourth_server_roles
             
             return {
                 'has_first_server': has_first_server_roles,
                 'has_second_server': has_second_server_roles,
                 'has_third_server': has_third_server_roles,
+                'has_fourth_server': has_fourth_server_roles,
                 'found_roles_first': found_roles_first,
                 'found_roles_second': found_roles_second,
                 'found_roles_third': found_roles_third,
+                'found_roles_fourth': found_roles_fourth,
                 'has_any_roles': has_any_roles
             }
             
@@ -272,9 +294,11 @@ class RoleSyncBot:
                 'has_first_server': False,
                 'has_second_server': False,
                 'has_third_server': False,
+                'has_fourth_server': False,
                 'found_roles_first': [],
                 'found_roles_second': [],
                 'found_roles_third': [],
+                'found_roles_fourth': [],
                 'has_any_roles': False
             }
 
@@ -289,8 +313,9 @@ class RoleSyncBot:
             target_role = target_server.get_role(TARGET_ROLE_ID)
             target_role_2 = target_server.get_role(TARGET_ROLE_2_ID)
             target_role_3 = target_server.get_role(TARGET_ROLE_3_ID)
+            target_role_4 = target_server.get_role(TARGET_ROLE_4_ID)
             
-            if not target_role or not target_role_2 or not target_role_3:
+            if not target_role or not target_role_2 or not target_role_3 or not target_role_4:
                 print("❌ Целевые роли не найдены")
                 return False
             
@@ -306,6 +331,7 @@ class RoleSyncBot:
             has_target_role = target_role in target_member.roles
             has_target_role_2 = target_role_2 in target_member.roles
             has_target_role_3 = target_role_3 in target_member.roles
+            has_target_role_4 = target_role_4 in target_member.roles
             
             actions_performed = []
             
@@ -357,6 +383,22 @@ class RoleSyncBot:
                 except Exception as e:
                     print(f"❌ Ошибка при удалении третьей роли: {e}")
             
+            # Четвертая роль (четвертый сервер)
+            if role_check['has_fourth_server'] and not has_target_role_4:
+                try:
+                    await target_member.add_roles(target_role_4, reason="Автоматическая синхронизация - четвертый сервер")
+                    actions_performed.append("✅ Выдана четвертая роль")
+                    print(f"✅ Выдана четвертая роль пользователю {username} ({user_id})")
+                except Exception as e:
+                    print(f"❌ Ошибка при выдаче четвертой роли: {e}")
+            elif not role_check['has_fourth_server'] and has_target_role_4:
+                try:
+                    await target_member.remove_roles(target_role_4, reason="Автоматическая синхронизация - нет ролей на четвертом сервере")
+                    actions_performed.append("🗑️ Удалена четвертая роль")
+                    print(f"🗑️ Удалена четвертая роль у пользователя {username} ({user_id})")
+                except Exception as e:
+                    print(f"❌ Ошибка при удалении четвертой роли: {e}")
+            
             # Логируем действия если они были
             if actions_performed:
                 log_msg = (
@@ -366,13 +408,14 @@ class RoleSyncBot:
                     f"• Первый сервер: {'✅' if role_check['has_first_server'] else '❌'} {', '.join(role_check['found_roles_first']) if role_check['found_roles_first'] else 'Нет ролей'}\n"
                     f"• Второй сервер: {'✅' if role_check['has_second_server'] else '❌'} {', '.join(role_check['found_roles_second']) if role_check['found_roles_second'] else 'Нет ролей'}\n"
                     f"• Третий сервер: {'✅' if role_check['has_third_server'] else '❌'} {', '.join(role_check['found_roles_third']) if role_check['found_roles_third'] else 'Нет ролей'}\n"
+                    f"• Четвертый сервер: {'✅' if role_check['has_fourth_server'] else '❌'} {', '.join(role_check['found_roles_fourth']) if role_check['found_roles_fourth'] else 'Нет ролей'}\n"
                     f"• Действия: {', '.join(actions_performed)}"
                 )
                 await self.log_to_channel(log_msg, color=0x0099ff)
             
             # Логика бана
             if check_ban and not role_check['has_any_roles']:
-                has_any_target_role = has_target_role or has_target_role_2 or has_target_role_3
+                has_any_target_role = has_target_role or has_target_role_2 or has_target_role_3 or has_target_role_4
                 
                 if has_any_target_role or user_id not in self.banned_users:
                     if user_id not in self.banned_users:
@@ -443,15 +486,17 @@ async def on_ready():
     source_server = bot.get_guild(SOURCE_SERVER_ID)
     source_server_2 = bot.get_guild(SOURCE_SERVER_2_ID)
     source_server_3 = bot.get_guild(SOURCE_SERVER_3_ID)
+    source_server_4 = bot.get_guild(SOURCE_SERVER_4_ID)
     target_server = bot.get_guild(TARGET_SERVER_ID)
     
     print(f'🔍 Доступность серверов:')
     print(f'   Первый сервер: {"✅" if source_server else "❌"} {SOURCE_SERVER_ID}')
     print(f'   Второй сервер: {"✅" if source_server_2 else "❌"} {SOURCE_SERVER_2_ID}')
     print(f'   Третий сервер: {"✅" if source_server_3 else "❌"} {SOURCE_SERVER_3_ID}')
+    print(f'   Четвертый сервер: {"✅" if source_server_4 else "❌"} {SOURCE_SERVER_4_ID}')
     print(f'   Целевой сервер: {"✅" if target_server else "❌"} {TARGET_SERVER_ID}')
     
-    activity = discord.Activity(type=discord.ActivityType.watching, name="3 сервера | 5 сек")
+    activity = discord.Activity(type=discord.ActivityType.watching, name="4 сервера | 5 сек")
     await bot.change_presence(activity=activity)
     
     await load_banned_users()
@@ -463,6 +508,7 @@ async def on_ready():
         f"• Сервер 1: {'✅' if source_server else '❌'} `{SOURCE_SERVER_ID}`\n"
         f"• Сервер 2: {'✅' if source_server_2 else '❌'} `{SOURCE_SERVER_2_ID}`\n"
         f"• Сервер 3: {'✅' if source_server_3 else '❌'} `{SOURCE_SERVER_3_ID}`\n"
+        f"• Сервер 4: {'✅' if source_server_4 else '❌'} `{SOURCE_SERVER_4_ID}`\n"
         f"• Целевой сервер: {'✅' if target_server else '❌'} `{TARGET_SERVER_ID}`\n"
         f"• Интервал проверки: `5 секунд`\n"
         f"• Авторазбан: `10 минут`\n"
@@ -558,7 +604,7 @@ async def sync_all_users_once():
 
 @tasks.loop(seconds=5)
 async def rapid_sync_task():
-    """Быстрая синхронизация всех пользователей каждые 10 секунд"""
+    """Быстрая синхронизация всех пользователей каждые 5 секунд"""
     try:
         await sync_all_users()
     except Exception as e:
@@ -647,10 +693,12 @@ async def check_user_command(ctx, user: discord.Member = None):
         target_role = target_server.get_role(TARGET_ROLE_ID)
         target_role_2 = target_server.get_role(TARGET_ROLE_2_ID)
         target_role_3 = target_server.get_role(TARGET_ROLE_3_ID)
+        target_role_4 = target_server.get_role(TARGET_ROLE_4_ID)
         
         has_target_role = target_role in user.roles if target_role else False
         has_target_role_2 = target_role_2 in user.roles if target_role_2 else False
         has_target_role_3 = target_role_3 in user.roles if target_role_3 else False
+        has_target_role_4 = target_role_4 in user.roles if target_role_4 else False
         
         # Создаем детальный отчет
         report = (
@@ -675,10 +723,16 @@ async def check_user_command(ctx, user: discord.Member = None):
         if role_check['found_roles_third']:
             report += f"  Найденные роли: {', '.join(role_check['found_roles_third'])}\n"
         
+        report += f"• Сервер 4 ({SOURCE_SERVER_4_ID}): {'✅ Есть роли' if role_check['has_fourth_server'] else '❌ Нет ролей'}\n"
+        
+        if role_check['found_roles_fourth']:
+            report += f"  Найденные роли: {', '.join(role_check['found_roles_fourth'])}\n"
+        
         report += f"\n**Целевой сервер:**\n"
         report += f"• Роль 1 ({TARGET_ROLE_ID}): {'✅ Есть' if has_target_role else '❌ Нет'}\n"
         report += f"• Роль 2 ({TARGET_ROLE_2_ID}): {'✅ Есть' if has_target_role_2 else '❌ Нет'}\n"
         report += f"• Роль 3 ({TARGET_ROLE_3_ID}): {'✅ Есть' if has_target_role_3 else '❌ Нет'}\n"
+        report += f"• Роль 4 ({TARGET_ROLE_4_ID}): {'✅ Есть' if has_target_role_4 else '❌ Нет'}\n"
         
         report += f"\n**Статус:**\n"
         report += f"• Есть роли на любом сервере: {'✅ Да' if role_check['has_any_roles'] else '❌ Нет'}\n"
@@ -821,10 +875,12 @@ async def stats_command(ctx):
     target_role = target_server.get_role(TARGET_ROLE_ID)
     target_role_2 = target_server.get_role(TARGET_ROLE_2_ID)
     target_role_3 = target_server.get_role(TARGET_ROLE_3_ID)
+    target_role_4 = target_server.get_role(TARGET_ROLE_4_ID)
     
     with_role_1 = len([m for m in target_server.members if target_role in m.roles]) if target_role else 0
     with_role_2 = len([m for m in target_server.members if target_role_2 in m.roles]) if target_role_2 else 0
     with_role_3 = len([m for m in target_server.members if target_role_3 in m.roles]) if target_role_3 else 0
+    with_role_4 = len([m for m in target_server.members if target_role_4 in m.roles]) if target_role_4 else 0
     
     stats_msg = (
         f"📊 **Статистика Role Sync Bot**\n"
@@ -833,9 +889,10 @@ async def stats_command(ctx):
         f"• С ролью 1: {with_role_1}\n"
         f"• С ролью 2: {with_role_2}\n"
         f"• С ролью 3: {with_role_3}\n"
+        f"• С ролью 4: {with_role_4}\n"
         f"• Забанено: {banned_count} пользователей\n"
         f"• Авторазбан: через 10 минут\n"
-        f"• Интервал проверки: 10 секунд\n"
+        f"• Интервал проверки: 5 секунд\n"
         f"• Мониторинг активен: {'✅' if role_bot.is_monitoring else '❌'}"
     )
     
@@ -844,7 +901,8 @@ async def stats_command(ctx):
 # Запуск бота
 def main():
     print("🚀 Запуск Role Sync Bot с авторазбаном...")
-    print(f"🔍 Серверов для проверки: 3")
+    print(f"🔍 Серверов для проверки: 4")
+    print(f"⏰ Интервал проверки: 5 секунд")
     print(f"⏰ Бан: 10 минут")
     print(f"🔄 Авторазбан: каждую минуту")
     print(f"📊 При запуске: проверка всех пользователей")
