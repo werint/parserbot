@@ -22,9 +22,10 @@ if IS_RAILWAY:
     sys.stdout = open(os.devnull, 'w')
     sys.stderr = open(os.devnull, 'w')
 
-# Настройки бота (ТОЛЬКО 2 СЕРВЕРА)
+# Настройки бота (3 СЕРВЕРА)
 SOURCE_SERVER_1_ID = 1003525677640851496  # Первый сервер-источник
 SOURCE_SERVER_2_ID = 1404969894562500718  # Второй сервер-источник
+SOURCE_SERVER_3_ID = 1084418816571879464  # Третий сервер-источник
 TARGET_SERVER_ID = 1437338164292485122     # Целевой сервер (куда выдаём роли)
 
 # Роли для проверки на первом сервере
@@ -33,9 +34,13 @@ SOURCE_1_ROLE_IDS = [1481402373879365835]
 # Роли для проверки на втором сервере
 SOURCE_2_ROLE_IDS = [1404969894574952557, 1404969894574952556]
 
+# Роли для проверки на третьем сервере
+SOURCE_3_ROLE_IDS = [1501701988965023805, 1084418816647368768, 1084418816647368769, 1261971136124682271]
+
 # Целевые роли для выдачи
 TARGET_ROLE_1_ID = 1437338476147380235  # Первая целевая роль (для первого сервера)
 TARGET_ROLE_2_ID = 1485619744320127100  # Вторая целевая роль (для второго сервера)
+TARGET_ROLE_3_ID = 1485994860962910289  # Третья целевая роль (для третьего сервера)
 
 LOG_CHANNEL_ID = 1485618781807050914     # Канал для логов
 
@@ -166,11 +171,14 @@ class RoleSyncBot:
         try:
             source_server_1 = bot.get_guild(SOURCE_SERVER_1_ID)
             source_server_2 = bot.get_guild(SOURCE_SERVER_2_ID)
+            source_server_3 = bot.get_guild(SOURCE_SERVER_3_ID)
             
             has_first_server_roles = False
             has_second_server_roles = False
+            has_third_server_roles = False
             found_roles_first = []
             found_roles_second = []
+            found_roles_third = []
             
             # Проверяем первый сервер
             if source_server_1:
@@ -192,21 +200,35 @@ class RoleSyncBot:
                             has_second_server_roles = True
                             found_roles_second.append(f"{role.name}")
             
-            has_any_roles = has_first_server_roles or has_second_server_roles
+            # Проверяем третий сервер
+            if source_server_3:
+                source_member_3 = source_server_3.get_member(user_id)
+                if source_member_3:
+                    for role_id in SOURCE_3_ROLE_IDS:
+                        role = source_server_3.get_role(role_id)
+                        if role and role in source_member_3.roles:
+                            has_third_server_roles = True
+                            found_roles_third.append(f"{role.name}")
+            
+            has_any_roles = has_first_server_roles or has_second_server_roles or has_third_server_roles
             
             return {
                 'has_first_server': has_first_server_roles,
                 'has_second_server': has_second_server_roles,
+                'has_third_server': has_third_server_roles,
                 'found_roles_first': found_roles_first,
                 'found_roles_second': found_roles_second,
+                'found_roles_third': found_roles_third,
                 'has_any_roles': has_any_roles
             }
         except Exception:
             return {
                 'has_first_server': False,
                 'has_second_server': False,
+                'has_third_server': False,
                 'found_roles_first': [],
                 'found_roles_second': [],
+                'found_roles_third': [],
                 'has_any_roles': False
             }
 
@@ -218,8 +240,9 @@ class RoleSyncBot:
             
             target_role_1 = target_server.get_role(TARGET_ROLE_1_ID)
             target_role_2 = target_server.get_role(TARGET_ROLE_2_ID)
+            target_role_3 = target_server.get_role(TARGET_ROLE_3_ID)
             
-            if not target_role_1 or not target_role_2:
+            if not target_role_1 or not target_role_2 or not target_role_3:
                 return False
             
             target_member = target_server.get_member(user_id)
@@ -231,6 +254,7 @@ class RoleSyncBot:
             
             has_target_role_1 = target_role_1 in target_member.roles
             has_target_role_2 = target_role_2 in target_member.roles
+            has_target_role_3 = target_role_3 in target_member.roles
             
             actions_performed = []
             
@@ -250,6 +274,14 @@ class RoleSyncBot:
                 await target_member.remove_roles(target_role_2, reason="Автосинхронизация - нет ролей на втором сервере")
                 actions_performed.append("🗑️ Удалена вторая роль")
             
+            # Третья роль (для третьего сервера)
+            if role_check['has_third_server'] and not has_target_role_3:
+                await target_member.add_roles(target_role_3, reason="Автосинхронизация - третий сервер")
+                actions_performed.append("✅ Выдана третья роль")
+            elif not role_check['has_third_server'] and has_target_role_3:
+                await target_member.remove_roles(target_role_3, reason="Автосинхронизация - нет ролей на третьем сервере")
+                actions_performed.append("🗑️ Удалена третья роль")
+            
             if actions_performed:
                 log_msg = (
                     f"🔧 **Синхронизация ролей**\n"
@@ -257,12 +289,13 @@ class RoleSyncBot:
                     f"• ID: `{user_id}`\n"
                     f"• Первый сервер: {'✅' if role_check['has_first_server'] else '❌'} {', '.join(role_check['found_roles_first']) if role_check['found_roles_first'] else 'Нет ролей'}\n"
                     f"• Второй сервер: {'✅' if role_check['has_second_server'] else '❌'} {', '.join(role_check['found_roles_second']) if role_check['found_roles_second'] else 'Нет ролей'}\n"
+                    f"• Третий сервер: {'✅' if role_check['has_third_server'] else '❌'} {', '.join(role_check['found_roles_third']) if role_check['found_roles_third'] else 'Нет ролей'}\n"
                     f"• Действия: {', '.join(actions_performed)}"
                 )
                 await self.log_to_channel(log_msg, color=0x0099ff)
             
             if check_ban and not role_check['has_any_roles']:
-                has_any_target_role = has_target_role_1 or has_target_role_2
+                has_any_target_role = has_target_role_1 or has_target_role_2 or has_target_role_3
                 
                 if user_id not in self.banned_users:
                     await self.ban_user(user_id, username)
@@ -294,14 +327,15 @@ async def on_ready():
     
     source_server_1 = bot.get_guild(SOURCE_SERVER_1_ID)
     source_server_2 = bot.get_guild(SOURCE_SERVER_2_ID)
+    source_server_3 = bot.get_guild(SOURCE_SERVER_3_ID)
     target_server = bot.get_guild(TARGET_SERVER_ID)
     
-    activity = discord.Activity(type=discord.ActivityType.watching, name="2 сервера | 5 сек")
+    activity = discord.Activity(type=discord.ActivityType.watching, name="3 сервера | 5 сек")
     await bot.change_presence(activity=activity)
     
     await load_banned_users()
     
-    startup_msg = f"🟢 **Role Sync Bot запущен**\n• Время: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n• Серверов: 2\n• Интервал: 5 секунд"
+    startup_msg = f"🟢 **Role Sync Bot запущен**\n• Время: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n• Серверов: 3\n• Интервал: 5 секунд"
     await role_bot.log_to_channel(startup_msg, color=0x00ff00)
     
     role_bot.is_monitoring = True
@@ -415,9 +449,11 @@ async def check_user_command(ctx, user: discord.Member = None):
         target_server = bot.get_guild(TARGET_SERVER_ID)
         target_role_1 = target_server.get_role(TARGET_ROLE_1_ID)
         target_role_2 = target_server.get_role(TARGET_ROLE_2_ID)
+        target_role_3 = target_server.get_role(TARGET_ROLE_3_ID)
         
         has_target_role_1 = target_role_1 in user.roles if target_role_1 else False
         has_target_role_2 = target_role_2 in user.roles if target_role_2 else False
+        has_target_role_3 = target_role_3 in user.roles if target_role_3 else False
         
         report = (
             f"📋 **Отчет по пользователю {user.mention}**\n"
@@ -427,10 +463,13 @@ async def check_user_command(ctx, user: discord.Member = None):
             f"• Сервер 1 ({SOURCE_SERVER_1_ID}): {'✅ Есть роли' if role_check['has_first_server'] else '❌ Нет ролей'}\n"
             f"  Найденные роли: {', '.join(role_check['found_roles_first']) if role_check['found_roles_first'] else 'Нет'}\n"
             f"• Сервер 2 ({SOURCE_SERVER_2_ID}): {'✅ Есть роли' if role_check['has_second_server'] else '❌ Нет ролей'}\n"
-            f"  Найденные роли: {', '.join(role_check['found_roles_second']) if role_check['found_roles_second'] else 'Нет'}\n\n"
+            f"  Найденные роли: {', '.join(role_check['found_roles_second']) if role_check['found_roles_second'] else 'Нет'}\n"
+            f"• Сервер 3 ({SOURCE_SERVER_3_ID}): {'✅ Есть роли' if role_check['has_third_server'] else '❌ Нет ролей'}\n"
+            f"  Найденные роли: {', '.join(role_check['found_roles_third']) if role_check['found_roles_third'] else 'Нет'}\n\n"
             f"**Целевой сервер:**\n"
             f"• Роль 1 ({TARGET_ROLE_1_ID}): {'✅ Есть' if has_target_role_1 else '❌ Нет'}\n"
-            f"• Роль 2 ({TARGET_ROLE_2_ID}): {'✅ Есть' if has_target_role_2 else '❌ Нет'}\n\n"
+            f"• Роль 2 ({TARGET_ROLE_2_ID}): {'✅ Есть' if has_target_role_2 else '❌ Нет'}\n"
+            f"• Роль 3 ({TARGET_ROLE_3_ID}): {'✅ Есть' if has_target_role_3 else '❌ Нет'}\n\n"
             f"**Статус:**\n"
             f"• Есть роли на любом сервере: {'✅ Да' if role_check['has_any_roles'] else '❌ Нет'}\n"
             f"• Статус бана: {'🔨 Забанен' if user.id in role_bot.banned_users else '✅ Не забанен'}"
@@ -452,9 +491,11 @@ async def stats_command(ctx):
     
     target_role_1 = target_server.get_role(TARGET_ROLE_1_ID)
     target_role_2 = target_server.get_role(TARGET_ROLE_2_ID)
+    target_role_3 = target_server.get_role(TARGET_ROLE_3_ID)
     
     with_role_1 = len([m for m in target_server.members if target_role_1 in m.roles]) if target_role_1 else 0
     with_role_2 = len([m for m in target_server.members if target_role_2 in m.roles]) if target_role_2 else 0
+    with_role_3 = len([m for m in target_server.members if target_role_3 in m.roles]) if target_role_3 else 0
     
     stats_msg = (
         f"📊 **Статистика Role Sync Bot**\n"
@@ -462,6 +503,7 @@ async def stats_command(ctx):
         f"• Всего пользователей: {total_members}\n"
         f"• С ролью 1: {with_role_1}\n"
         f"• С ролью 2: {with_role_2}\n"
+        f"• С ролью 3: {with_role_3}\n"
         f"• Забанено: {banned_count} пользователей\n"
         f"• Интервал проверки: 5 секунд"
     )
